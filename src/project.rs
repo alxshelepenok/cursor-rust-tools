@@ -42,7 +42,7 @@ impl Project {
     }
 
     pub fn cache_folder(&self) -> &str {
-        ".docs-cache"
+        ".crates-cache"
     }
 
     pub fn cache_dir(&self) -> PathBuf {

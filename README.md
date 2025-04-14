@@ -20,7 +20,7 @@ out of date and potentially for a different version. This can lead to all kinds 
 
 For the LSP functionality `src/lsp` it spins up a new Rust Analyzer that indexes your codebase just like the on running in your editor. We can't query the one running in the editor because Rust Analyzer is bound to be used by a single consumer (e.g. the `open document` action requires a `close document` in the right order, etc)
 
-For documentation, it will run `cargo docs` and then parse the html documentation into markdown locally. This information is stored in the project root in the `.docs-cache` folder.
+For documentation, it will run `cargo docs` and then parse the html documentation into markdown locally. This information is stored in the project root in the `.crates-cache` folder.
 
 ## Quickstart
 
