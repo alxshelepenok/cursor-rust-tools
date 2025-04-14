@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
                 context.address_information().1
             );
             info!("Configuration file: {}", context.configuration_file());
-            if context.project_descriptions().await.is_empty() {
+            if context.projects().await.is_empty() {
                 error!(
                     "No projects found, please run without `--no-ui` or edit configuration file"
                 );
@@ -73,9 +73,10 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         } else {
-            let project_descriptions = context.project_descriptions().await;
+            let projects = context.projects().await;
+            let settings = context.settings().await;
 
-            run_ui(context, receiver, project_descriptions)
+            run_ui(context, receiver, projects, settings)
         }
     };
 

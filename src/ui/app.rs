@@ -20,6 +20,17 @@ pub struct ProjectDescription {
     pub is_indexing_docs: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct Settings {
+    pub scale: f32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { scale: 1.0 }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum SidebarTab {
     Projects,
@@ -44,15 +55,16 @@ pub struct App {
     events: HashMap<String, Vec<TimestampedEvent>>,
     selected_sidebar_tab: SidebarTab,
     selected_event: Option<TimestampedEvent>,
-    project_descriptions: Vec<ProjectDescription>,
-    ui_scale: f32,
+    projects: Vec<ProjectDescription>,
+    settings: Settings,
 }
 
 impl App {
     pub fn new(
         context: Context,
         receiver: Receiver<ContextNotification>,
-        project_descriptions: Vec<ProjectDescription>,
+        projects: Vec<ProjectDescription>,
+        settings: Settings,
     ) -> Self {
         Self {
             context,
@@ -62,51 +74,21 @@ impl App {
             events: HashMap::new(),
             selected_sidebar_tab: SidebarTab::Projects,
             selected_event: None,
-            project_descriptions,
-            ui_scale: 1.0,
+            projects,
+            settings,
         }
-    }
-
-    pub fn with_creation_context(self, cc: &eframe::CreationContext<'_>) -> Self {
-        let ctx_clone = cc.egui_ctx.clone();
-        let context = self.context.clone();
-
-        tokio::spawn(async move {
-            if let Some(scale) = context.get_ui_scale().await {
-                if scale >= 0.5 && scale <= 2.5 {
-                    ctx_clone.set_pixels_per_point(scale);
-
-                    let base_width = 800.0;
-                    let base_height = 600.0;
-
-                    let scale_factor = scale.sqrt();
-
-                    let width = base_width + (scale_factor - 1.0) * 100.0;
-                    let height = base_height + (scale_factor - 1.0) * 100.0;
-
-                    ctx_clone.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        width, height,
-                    )));
-
-                    ctx_clone.request_repaint();
-                    tracing::debug!("Applied UI scale from config: {}", scale);
-                }
-            }
-        });
-
-        self
     }
 
     fn handle_notifications(&mut self) -> bool {
         let mut has_new_events = false;
         while let Ok(notification) = self.receiver.try_recv() {
-            if let ContextNotification::ProjectDescriptions(project_descriptions) = notification {
-                self.project_descriptions = project_descriptions;
+            if let ContextNotification::ProjectDescriptions(projects) = notification {
+                self.projects = projects;
                 has_new_events = true;
                 continue;
             }
 
-            self.context.request_project_descriptions();
+            self.context.request_projects();
 
             if matches!(notification, ContextNotification::Lsp(_)) {
                 has_new_events = true;
@@ -116,7 +98,7 @@ impl App {
             has_new_events = true;
             tracing::debug!("Received notification: {:?}", notification);
             let project_path = notification.notification_path();
-            let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
+            let Some(project) = find_root_project(&project_path, &self.projects) else {
                 tracing::error!("Project not found: {:?}", project_path);
                 continue;
             };
@@ -130,7 +112,7 @@ impl App {
         has_new_events
     }
 
-    fn draw_left_sidebar(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
+    fn draw_left_sidebar(&mut self, ui: &mut Ui, projects: &[ProjectDescription]) {
         ui.add_space(15.0);
         ui.columns(3, |columns| {
             columns[0].with_layout(
@@ -169,7 +151,7 @@ impl App {
 
         match self.selected_sidebar_tab {
             SidebarTab::Projects => {
-                self.draw_projects_tab(ui, project_descriptions);
+                self.draw_projects_tab(ui, projects);
             }
             SidebarTab::Info => {
                 self.draw_info_tab(ui);
@@ -180,10 +162,10 @@ impl App {
         }
     }
 
-    fn draw_projects_tab(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
+    fn draw_projects_tab(&mut self, ui: &mut Ui, projects: &[ProjectDescription]) {
         ScrollArea::vertical().show(ui, |ui| {
             let selected_path = self.selected_project.clone();
-            for project in project_descriptions {
+            for project in projects {
                 let is_spinning = project.is_indexing_lsp || project.is_indexing_docs;
                 let is_selected = selected_path.as_ref() == Some(&project.root);
 
@@ -275,7 +257,7 @@ impl App {
         static TEMP_SCALE_VALUE: AtomicU32 = AtomicU32::new(0);
 
         if !SCALE_INITIALIZED.load(Ordering::SeqCst) {
-            let scale_as_u32 = (self.ui_scale * 100.0) as u32;
+            let scale_as_u32 = (self.settings.scale * 100.0) as u32;
             TEMP_SCALE_VALUE.store(scale_as_u32, Ordering::SeqCst);
             SCALE_INITIALIZED.store(true, Ordering::SeqCst);
         }
@@ -287,7 +269,8 @@ impl App {
             .add(
                 egui::Slider::new(&mut scale, 0.5..=2.5)
                     .step_by(0.1)
-                    .text("Scale factor"),
+                    .text("Scale factor")
+                    .clamping(egui::SliderClamping::Always),
             )
             .changed()
         {
@@ -297,13 +280,9 @@ impl App {
 
         ui.add_space(10.0);
 
-        if ui.button("Preview Scale").clicked() {
-            self.ui_scale = scale;
-        }
-
         if ui.button("Save & Restart").clicked() {
             let context = self.context.clone();
-            let scale = scale;
+            let scale = TEMP_SCALE_VALUE.load(Ordering::SeqCst) as f32 / 100.0;
 
             use std::env;
             use std::process::Command;
@@ -312,7 +291,7 @@ impl App {
 
             let handle = tokio::runtime::Handle::current();
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = handle.block_on(async { context.set_ui_scale(scale).await }) {
+                if let Err(e) = handle.block_on(async { context.set_settings_scale(scale).await }) {
                     tracing::error!("Failed to save UI scale: {}", e);
                 } else {
                     tracing::info!("UI scale saved: {}. Restarting application...", scale);
@@ -338,17 +317,14 @@ impl App {
         ui.label("Changes will be saved and the application will restart automatically.");
     }
 
-    fn draw_main_area(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
+    fn draw_main_area(&mut self, ui: &mut Ui, projects: &[ProjectDescription]) {
         if let Some(selected_root) = &self.selected_project {
             let config_path = PathBuf::from(selected_root).join(".cursor/mcp.json");
-            if let Some(project) = project_descriptions
-                .iter()
-                .find(|p| p.root == *selected_root)
-            {
+            if let Some(project) = projects.iter().find(|p| p.root == *selected_root) {
                 ui.vertical(|ui| {
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Update Docs Index").clicked() {
+                        if ui.button("Update docs index").clicked() {
                             if let Some(ref selected_project) = self.selected_project {
                                 let context = self.context.clone();
                                 let selected_project = selected_project.clone();
@@ -361,7 +337,7 @@ impl App {
                                 });
                             }
                             self.logs
-                                .push(format!("Update Docs Index clicked for: {}", project.name));
+                                .push(format!("Update docs index clicked for: {}", project.name));
                         }
                         if ui.button("Open Project").clicked() {
                             if let Err(e) = open::that(project.root.to_string_lossy().to_string()) {
@@ -387,7 +363,7 @@ impl App {
                         ui.add_space(10.0);
                         if project.is_indexing_docs {
                             ui.add(egui::Spinner::new());
-                            ui.label("Indexing Docs...");
+                            ui.label("Indexing docs...");
                         }
                     });
 
@@ -455,7 +431,7 @@ impl App {
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label("Select or add a project");
-                ui.label("Added projects first need to be indexed for LSP and Docs before they can be used.");
+                ui.label("Added projects first need to be indexed for LSP and docs before they can be used.");
             });
             if self.selected_event.is_some() {
                 self.selected_event = None;
@@ -475,7 +451,7 @@ impl App {
 
     fn draw_right_sidebar(&mut self, ui: &mut Ui, event: TimestampedEvent) {
         ui.horizontal(|ui| {
-            if ui.button("X").on_hover_text("Close").clicked() {
+            if ui.button("Close").on_hover_text("Close").clicked() {
                 self.selected_event = None;
             }
             if ui.button("Copy").on_hover_text("Copy").clicked() {
@@ -498,56 +474,42 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
-        let current_scale = ctx.pixels_per_point();
-        if (current_scale - self.ui_scale).abs() > 0.01 {
-            self.ui_scale = current_scale
-        }
-
         let has_new_events = self.handle_notifications();
-        let project_descriptions = self.project_descriptions.clone();
+        let projects = self.projects.clone();
 
         let sidebar_frame = egui::Frame {
             fill: egui::Color32::from_rgb(32, 32, 32),
             ..egui::Frame::side_top_panel(&ctx.style())
         };
 
+        let panel_width = 300.0;
+
         SidePanel::left("left_sidebar")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_width(300.0)
+            .min_width(panel_width)
+            .default_width(panel_width)
             .show(ctx, |ui| {
-                self.draw_left_sidebar(ui, &project_descriptions);
+                self.draw_left_sidebar(ui, &projects);
             });
 
         if let Some(event) = self.selected_event.clone() {
             SidePanel::right("right_sidebar")
                 .resizable(true)
-                .default_width(500.0)
+                .min_width(panel_width)
+                .default_width(panel_width)
                 .show(ctx, |ui| {
                     self.draw_right_sidebar(ui, event);
                 });
         }
 
         CentralPanel::default().show(ctx, |ui| {
-            self.draw_main_area(ui, &project_descriptions);
+            self.draw_main_area(ui, &projects);
         });
 
         if has_new_events {
             ctx.request_repaint();
         }
-    }
-
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        let context = self.context.clone();
-        let scale = self.ui_scale;
-
-        tokio::spawn(async move {
-            if let Err(e) = context.set_ui_scale(scale).await {
-                tracing::error!("Failed to save UI scale on exit: {}", e);
-            } else {
-                tracing::debug!("UI scale saved on exit: {}", scale);
-            }
-        });
     }
 }
 

@@ -9,7 +9,7 @@ use crate::cargo_remote::CargoRemote;
 use crate::docs::{Docs, DocsNotification};
 use crate::lsp::LspNotification;
 use crate::mcp::McpNotification;
-use crate::ui::ProjectDescription;
+use crate::ui::{ProjectDescription, Settings};
 use crate::{
     lsp::RustAnalyzerLsp,
     project::{Project, TransportType},
@@ -39,7 +39,7 @@ impl ContextNotification {
             ContextNotification::Mcp(McpNotification::Response { project, .. }) => project.clone(),
             ContextNotification::ProjectAdded(project) => project.clone(),
             ContextNotification::ProjectRemoved(project) => project.clone(),
-            ContextNotification::ProjectDescriptions(_) => PathBuf::from("project_descriptions"),
+            ContextNotification::ProjectDescriptions(_) => PathBuf::from("projects"),
         }
     }
 
@@ -168,7 +168,17 @@ impl Context {
         format!("~/{}", CONFIGURATION_FILE)
     }
 
-    pub async fn project_descriptions(&self) -> Vec<ProjectDescription> {
+    pub async fn settings(&self) -> Settings {
+        let config = self.read_config_file().await;
+        match config {
+            Ok(config) => Settings {
+                scale: config.settings.scale.unwrap_or(1.0),
+            },
+            Err(_) => Settings::default(),
+        }
+    }
+
+    pub async fn projects(&self) -> Vec<ProjectDescription> {
         let projects_map = self.projects.read().await;
         project_descriptions(&projects_map).await
     }
@@ -187,18 +197,19 @@ impl Context {
         PathBuf::from(parsed)
     }
 
-    pub async fn set_ui_scale(&self, scale: f32) -> Result<()> {
+    pub async fn set_settings_scale(&self, scale: f32) -> Result<()> {
         let mut config = self.read_config_file().await?;
-        config.ui.scale = Some(scale);
+        config.settings.scale = Some(scale);
         self.write_config_file(&config).await?;
         Ok(())
     }
 
-    pub async fn get_ui_scale(&self) -> Option<f32> {
+    #[allow(dead_code)]
+    pub async fn get_settings_scale(&self) -> Option<f32> {
         match self.read_config_file().await {
-            Ok(config) => config.ui.scale,
+            Ok(config) => config.settings.scale,
             Err(e) => {
-                tracing::warn!("Failed to read UI scale from config: {}", e);
+                tracing::warn!("Failed to read scale from config: {}", e);
                 None
             }
         }
@@ -210,7 +221,7 @@ impl Context {
         if !config_path.exists() {
             return Ok(SerConfig {
                 projects: vec![],
-                ui: SerUiConfig::default(),
+                settings: SerSettings::default(),
             });
         }
 
@@ -219,7 +230,7 @@ impl Context {
         if toml_string.trim().is_empty() {
             return Ok(SerConfig {
                 projects: vec![],
-                ui: SerUiConfig::default(),
+                settings: SerSettings::default(),
             });
         }
 
@@ -241,9 +252,9 @@ impl Context {
     }
 
     async fn write_config(&self) -> Result<()> {
-        let ui_config = match self.read_config_file().await {
-            Ok(config) => config.ui,
-            Err(_) => SerUiConfig::default(),
+        let settings = match self.read_config_file().await {
+            Ok(config) => config.settings,
+            Err(_) => SerSettings::default(),
         };
 
         let projects_map = self.projects.read().await;
@@ -258,7 +269,7 @@ impl Context {
 
         let config = SerConfig {
             projects: projects_to_save,
-            ui: ui_config,
+            settings,
         };
 
         self.write_config_file(&config).await
@@ -360,7 +371,7 @@ impl Context {
         projects_map.insert(root.clone(), project_context);
         drop(projects_map);
 
-        self.request_project_descriptions();
+        self.request_projects();
 
         if let Err(e) = self.write_config().await {
             tracing::error!("Failed to write config after adding project: {}", e);
@@ -394,14 +405,14 @@ impl Context {
         project
     }
 
-    pub fn request_project_descriptions(&self) {
+    pub fn request_projects(&self) {
         let projects = self.projects.clone();
         let notifier = self.notifier.clone();
         tokio::spawn(async move {
             let projects_map = projects.read().await;
-            let project_descriptions = project_descriptions(&projects_map).await;
+            let projects_descriptions = project_descriptions(&projects_map).await;
             if let Err(e) = notifier.send(ContextNotification::ProjectDescriptions(
-                project_descriptions,
+                projects_descriptions,
             )) {
                 tracing::error!("Failed to send project descriptions: {}", e);
             }
@@ -476,11 +487,11 @@ const CONFIG_TEMPLATE: &str = r#"
 struct SerConfig {
     projects: Vec<SerProject>,
     #[serde(default)]
-    ui: SerUiConfig,
+    settings: SerSettings,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-struct SerUiConfig {
+struct SerSettings {
     scale: Option<f32>,
 }
 
