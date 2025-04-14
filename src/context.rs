@@ -187,7 +187,65 @@ impl Context {
         PathBuf::from(parsed)
     }
 
+    pub async fn set_ui_scale(&self, scale: f32) -> Result<()> {
+        let mut config = self.read_config_file().await?;
+        config.ui.scale = Some(scale);
+        self.write_config_file(&config).await?;
+        Ok(())
+    }
+
+    pub async fn get_ui_scale(&self) -> Option<f32> {
+        match self.read_config_file().await {
+            Ok(config) => config.ui.scale,
+            Err(e) => {
+                tracing::warn!("Failed to read UI scale from config: {}", e);
+                None
+            }
+        }
+    }
+
+    async fn read_config_file(&self) -> Result<SerConfig> {
+        let config_path = self.config_path();
+
+        if !config_path.exists() {
+            return Ok(SerConfig {
+                projects: vec![],
+                ui: SerUiConfig::default(),
+            });
+        }
+
+        let toml_string = fs::read_to_string(&config_path)?;
+
+        if toml_string.trim().is_empty() {
+            return Ok(SerConfig {
+                projects: vec![],
+                ui: SerUiConfig::default(),
+            });
+        }
+
+        let config: SerConfig = toml::from_str(&toml_string)?;
+        Ok(config)
+    }
+
+    async fn write_config_file(&self, config: &SerConfig) -> Result<()> {
+        let config_path = self.config_path();
+        let toml_string = toml::to_string_pretty(config)?;
+
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(&config_path, toml_string)?;
+        tracing::debug!("Wrote config file to {:?}", config_path);
+        Ok(())
+    }
+
     async fn write_config(&self) -> Result<()> {
+        let ui_config = match self.read_config_file().await {
+            Ok(config) => config.ui,
+            Err(_) => SerUiConfig::default(),
+        };
+
         let projects_map = self.projects.read().await;
         let projects_to_save: Vec<SerProject> = projects_map
             .values()
@@ -197,19 +255,13 @@ impl Context {
                 ignore_crates: p.ignore_crates().to_vec(),
             })
             .collect();
+
         let config = SerConfig {
             projects: projects_to_save,
+            ui: ui_config,
         };
 
-        let config_path = self.config_path();
-
-        let toml_string = toml::to_string_pretty(&config)?;
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&config_path, toml_string)?;
-        tracing::debug!("Wrote config file to {:?}", config_path);
-        Ok(())
+        self.write_config_file(&config).await
     }
 
     pub async fn load_config(&self) -> Result<()> {
@@ -227,7 +279,7 @@ impl Context {
             Ok(content) => content,
             Err(e) => {
                 tracing::error!("Failed to read config file {:?}: {}", config_path, e);
-                return Err(e.into()); // Propagate read error
+                return Err(e.into());
             }
         };
 
@@ -247,7 +299,7 @@ impl Context {
                     config_path,
                     e
                 );
-                // Don't return error here, maybe the file is corrupt but we can continue
+
                 return Ok(());
             }
         };
@@ -257,7 +309,7 @@ impl Context {
                 root: PathBuf::from(&project.root),
                 ignore_crates: project.ignore_crates,
             };
-            // Validate project root before adding
+
             if !project.root().exists() || !project.root().is_dir() {
                 tracing::warn!(
                     "Project root {:?} from config does not exist or is not a directory, skipping.",
@@ -265,7 +317,7 @@ impl Context {
                 );
                 continue;
             }
-            // We need to canonicalize again as the stored path might be relative or different
+
             match Project::new(project.root()) {
                 Ok(new_project) => {
                     if let Err(e) = self.add_project(new_project).await {
@@ -289,7 +341,6 @@ impl Context {
         Ok(())
     }
 
-    /// Add a new project to the context
     pub async fn add_project(&self, project: Project) -> Result<()> {
         let root = project.root().clone();
         let lsp = RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await?;
@@ -311,7 +362,6 @@ impl Context {
 
         self.request_project_descriptions();
 
-        // Write config after successfully adding
         if let Err(e) = self.write_config().await {
             tracing::error!("Failed to write config after adding project: {}", e);
         }
@@ -323,7 +373,6 @@ impl Context {
         Ok(())
     }
 
-    /// Remove a project from the context
     pub async fn remove_project(&self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
         let project = {
             let mut projects_map = self.projects.write().await;
@@ -337,7 +386,7 @@ impl Context {
             {
                 tracing::error!("Failed to send project removed notification: {}", e);
             }
-            // Write config after successfully removing
+
             if let Err(e) = self.write_config().await {
                 tracing::error!("Failed to write config after removing project: {}", e);
             }
@@ -359,14 +408,11 @@ impl Context {
         });
     }
 
-    /// Get a reference to a project context by its root path
     pub async fn get_project(&self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
         let projects_map = self.projects.read().await;
         projects_map.get(root).cloned()
     }
 
-    /// Get a reference to a project context by any path within the project
-    /// Will traverse up the path hierarchy until it finds a matching project root
     pub async fn get_project_by_path(&self, path: &Path) -> Option<Arc<ProjectContext>> {
         let mut current_path = path.to_path_buf();
 
@@ -429,6 +475,13 @@ const CONFIG_TEMPLATE: &str = r#"
 #[derive(Serialize, Deserialize, Debug)]
 struct SerConfig {
     projects: Vec<SerProject>,
+    #[serde(default)]
+    ui: SerUiConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct SerUiConfig {
+    scale: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

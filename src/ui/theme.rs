@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use egui::{FontData, FontDefinitions, FontFamily, FontId, TextStyle};
+use egui::{FontDefinitions, FontFamily, FontId, TextStyle};
 use egui_aesthetix::Aesthetix;
 
 pub fn apply_theme(ctx: &egui::Context) {
@@ -13,20 +13,7 @@ pub fn apply_theme(ctx: &egui::Context) {
 }
 
 fn font_definitions() -> (FontDefinitions, BTreeMap<TextStyle, FontId>) {
-    let mut fonts = FontDefinitions::default();
-    //Install my own font (maybe supporting non-latin characters):
-    fonts.font_data.insert(
-        "OpenSans".to_owned(),
-        Arc::new(FontData::from_static(include_bytes!(
-            "../../assets/OpenSans-Regular.ttf"
-        ))),
-    );
-    // Put my font first (highest priority):
-    fonts
-        .families
-        .get_mut(&FontFamily::Proportional)
-        .unwrap()
-        .insert(0, "OpenSans".to_owned());
+    let fonts = FontDefinitions::default();
 
     use FontFamily::{Monospace, Proportional};
     (

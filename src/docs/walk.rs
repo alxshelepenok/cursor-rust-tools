@@ -40,10 +40,10 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
     let dependencies = get_cargo_dependencies(project)?;
     tracing::info!("dependencies: {:?}", dependencies);
 
-    // Convert dependencies to a HashMap for easier lookup
+    
     let dep_versions: HashMap<String, String> = dependencies.into_iter().collect();
 
-    // Walk the docs directory
+    
     let walker = WalkBuilder::new(project.docs_dir()).hidden(false).build();
 
     for result in walker {
@@ -53,7 +53,7 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
         if path.extension().and_then(|ext| ext.to_str()) == Some("html") {
             if let Some(relative_path) = path_to_cache_key(path, project.docs_dir()) {
                 if let Some((crate_name, file_path)) = extract_crate_and_path(&relative_path) {
-                    // Skip if crate is not in dependencies
+                    
                     let Some(version) = dep_versions.get(crate_name) else {
                         tracing::debug!(
                             "Skipping {crate_name}: {file_path} because it's not in dependencies"
@@ -61,13 +61,13 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         continue;
                     };
 
-                    // Skip if crate is in ignore list
+                    
                     if project.ignore_crates().contains(&crate_name.to_string()) {
                         tracing::debug!("Skipping {crate_name} because it's in ignore list");
                         continue;
                     }
 
-                    // Skip if version hasn't changed
+                    
                     if let Some(cached_version) = cache.crate_versions.get(crate_name) {
                         if cached_version == version {
                             tracing::debug!(
@@ -77,7 +77,7 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         }
                     }
 
-                    // Process the file since it's either new or updated
+                    
                     let html_content = fs::read_to_string(path)?;
                     let markdown = extract_md(&html_content);
                     tracing::debug!("Indexing {crate_name}: {file_path}");
@@ -92,7 +92,7 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         .or_default()
                         .insert(symbol, markdown);
 
-                    // Store the version number
+                    
                     cache
                         .crate_versions
                         .insert(crate_name.to_string(), version.clone());
@@ -101,7 +101,7 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
         }
     }
 
-    // Create and save cache
+    
     cache.save(project)?;
 
     Ok(())

@@ -65,7 +65,6 @@ impl CargoRemote {
                     messages.push(message);
                 }
                 Err(_) => {
-                    // Cargo test doesn't respect `message-format=json`
                     test_messages.push(line.to_string());
                 }
             }

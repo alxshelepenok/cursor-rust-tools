@@ -13,8 +13,8 @@ use crate::project::Project;
 
 #[derive(Debug)]
 pub struct ChangeNotifier {
-    #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
-    debouncer: Debouncer<FsEventWatcher>,
+    #[allow(dead_code)]
+    debouncer: Debouncer<notify::RecommendedWatcher>,
 }
 
 impl ChangeNotifier {
@@ -35,7 +35,6 @@ impl ChangeNotifier {
             },
         )?;
 
-        // We watch the root folder
         debouncer
             .watcher()
             .watch(project.root(), RecursiveMode::Recursive)?;
@@ -49,7 +48,6 @@ fn handle_event(
     handle: Handle,
     target_path: PathBuf,
 ) {
-    // Don't trigger lsp on target files. Otherwise it will trigger itself.
     if event.path.starts_with(&target_path) {
         return;
     }

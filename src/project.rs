@@ -54,8 +54,6 @@ impl Project {
             .map_err(|_| anyhow::anyhow!("Failed to create file URI"))
     }
 
-    /// Given an absolute path, return the path relative to the project root.
-    /// Returns an error if the path is not within the project root.
     pub fn relative_path(&self, absolute_path: impl AsRef<Path>) -> Result<String, String> {
         let absolute_path = absolute_path.as_ref();
         absolute_path

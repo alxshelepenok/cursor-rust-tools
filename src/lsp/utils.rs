@@ -25,9 +25,9 @@ pub fn get_location_contents(
             continue;
         }
         known_files.insert(url.clone());
-        // Convert the URL to a file path
+
         let path = url_to_file_path(&url)?;
-        // Read the file contents
+
         let content = fs::read_to_string(&path)?;
         contents.push((content, path));
     }
@@ -45,7 +45,6 @@ pub fn format_marked_string(marked_string: &MarkedString) -> String {
     }
 }
 
-// Helper function to convert a URL to a file path
 fn url_to_file_path(url: &Url) -> Result<PathBuf, std::io::Error> {
     url.to_file_path().map_err(|_| {
         std::io::Error::new(

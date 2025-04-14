@@ -32,10 +32,10 @@ use flume::Sender;
 pub struct RustAnalyzerLsp {
     project: Project,
     server: Arc<Mutex<ServerSocket>>,
-    #[allow(dead_code)] // Keep the handle to ensure the mainloop runs
+    #[allow(dead_code)]
     mainloop_handle: Mutex<Option<JoinHandle<()>>>,
     indexed_rx: Mutex<flume::Receiver<()>>,
-    #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
+    #[allow(dead_code)]
     change_notifier: ChangeNotifier,
 }
 
@@ -45,7 +45,7 @@ impl RustAnalyzerLsp {
         let (mainloop, server) = async_lsp::MainLoop::new_client(|_server| {
             ServiceBuilder::new()
                 .layer(TracingLayer::default())
-                .layer(LifecycleLayer::default()) // Handle init/shutdown automatically
+                .layer(LifecycleLayer::default())
                 .layer(CatchUnwindLayer::default())
                 .layer(ConcurrencyLayer::default())
                 .service(ClientState::new_router(
@@ -75,7 +75,6 @@ impl RustAnalyzerLsp {
 
         let server = Arc::new(Mutex::new(server));
 
-        // Get the current runtime handle
         let handle = tokio::runtime::Handle::current();
         let change_notifier = ChangeNotifier::new(server.clone(), project, handle)?;
 
@@ -87,7 +86,6 @@ impl RustAnalyzerLsp {
             change_notifier,
         };
 
-        // Initialize.
         let init_ret = client
             .server
             .lock()
@@ -99,12 +97,11 @@ impl RustAnalyzerLsp {
                 }]),
                 capabilities: ClientCapabilities {
                     window: Some(WindowClientCapabilities {
-                        work_done_progress: Some(true), // Required for indexing progress
+                        work_done_progress: Some(true),
                         ..WindowClientCapabilities::default()
                     }),
                     text_document: Some(TextDocumentClientCapabilities {
                         document_symbol: Some(DocumentSymbolClientCapabilities {
-                            // Flat symbols are easier to process for us
                             hierarchical_document_symbol_support: Some(false),
                             ..DocumentSymbolClientCapabilities::default()
                         }),
@@ -157,7 +154,6 @@ impl RustAnalyzerLsp {
             .exit(())
             .context("Sending Exit notification failed")?;
 
-        // Wait for the mainloop to finish. This implicitly waits for the process to exit.
         if let Err(e) = self.mainloop_handle.lock().await.take().unwrap().await {
             tracing::error!("Error joining LSP mainloop task: {:?}", e);
         }
@@ -174,8 +170,8 @@ impl RustAnalyzerLsp {
             .did_open(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
                     uri: uri.clone(),
-                    language_id: "rust".into(), // Assuming Rust, could be made generic
-                    version: 0,                 // Start with version 0
+                    language_id: "rust".into(),
+                    version: 0,
                     text,
                 },
             })

@@ -24,6 +24,7 @@ pub struct ProjectDescription {
 enum SidebarTab {
     Projects,
     Info,
+    Settings,
 }
 
 #[derive(Clone, Debug)]
@@ -44,6 +45,7 @@ pub struct App {
     selected_sidebar_tab: SidebarTab,
     selected_event: Option<TimestampedEvent>,
     project_descriptions: Vec<ProjectDescription>,
+    ui_scale: f32,
 }
 
 impl App {
@@ -61,28 +63,56 @@ impl App {
             selected_sidebar_tab: SidebarTab::Projects,
             selected_event: None,
             project_descriptions,
+            ui_scale: 1.0,
         }
+    }
+
+    pub fn with_creation_context(self, cc: &eframe::CreationContext<'_>) -> Self {
+        let ctx_clone = cc.egui_ctx.clone();
+        let context = self.context.clone();
+
+        tokio::spawn(async move {
+            if let Some(scale) = context.get_ui_scale().await {
+                if scale >= 0.5 && scale <= 2.5 {
+                    ctx_clone.set_pixels_per_point(scale);
+
+                    let base_width = 800.0;
+                    let base_height = 600.0;
+
+                    let scale_factor = scale.sqrt();
+
+                    let width = base_width + (scale_factor - 1.0) * 100.0;
+                    let height = base_height + (scale_factor - 1.0) * 100.0;
+
+                    ctx_clone.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        width, height,
+                    )));
+
+                    ctx_clone.request_repaint();
+                    tracing::debug!("Applied UI scale from config: {}", scale);
+                }
+            }
+        });
+
+        self
     }
 
     fn handle_notifications(&mut self) -> bool {
         let mut has_new_events = false;
         while let Ok(notification) = self.receiver.try_recv() {
-            // Order is important here. New projects came in
             if let ContextNotification::ProjectDescriptions(project_descriptions) = notification {
                 self.project_descriptions = project_descriptions;
                 has_new_events = true;
                 continue;
             }
 
-            // If its not a new project notification, request projects
             self.context.request_project_descriptions();
 
-            // If its a lsp, ignore because there's a lot of them
             if matches!(notification, ContextNotification::Lsp(_)) {
                 has_new_events = true;
                 continue;
             }
-            // Otherwise, we have a new event
+
             has_new_events = true;
             tracing::debug!("Received notification: {:?}", notification);
             let project_path = notification.notification_path();
@@ -101,14 +131,40 @@ impl App {
     }
 
     fn draw_left_sidebar(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
-        ui.add_space(10.0);
-        ui.columns(2, |columns| {
-            columns[0].selectable_value(
-                &mut self.selected_sidebar_tab,
-                SidebarTab::Projects,
-                "Projects",
+        ui.add_space(15.0);
+        ui.columns(3, |columns| {
+            columns[0].with_layout(
+                egui::Layout::top_down_justified(egui::Align::Center),
+                |ui| {
+                    ui.selectable_value(
+                        &mut self.selected_sidebar_tab,
+                        SidebarTab::Projects,
+                        RichText::new("Projects").text_style(egui::TextStyle::Button),
+                    );
+                },
             );
-            columns[1].selectable_value(&mut self.selected_sidebar_tab, SidebarTab::Info, "Info");
+
+            columns[1].with_layout(
+                egui::Layout::top_down_justified(egui::Align::Center),
+                |ui| {
+                    ui.selectable_value(
+                        &mut self.selected_sidebar_tab,
+                        SidebarTab::Info,
+                        RichText::new("Info").text_style(egui::TextStyle::Button),
+                    );
+                },
+            );
+
+            columns[2].with_layout(
+                egui::Layout::top_down_justified(egui::Align::Center),
+                |ui| {
+                    ui.selectable_value(
+                        &mut self.selected_sidebar_tab,
+                        SidebarTab::Settings,
+                        RichText::new("Settings").text_style(egui::TextStyle::Button),
+                    );
+                },
+            );
         });
 
         match self.selected_sidebar_tab {
@@ -117,6 +173,9 @@ impl App {
             }
             SidebarTab::Info => {
                 self.draw_info_tab(ui);
+            }
+            SidebarTab::Settings => {
+                self.draw_settings_tab(ui);
             }
         }
     }
@@ -204,6 +263,81 @@ impl App {
         });
     }
 
+    fn draw_settings_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Application Settings");
+
+        ui.add_space(20.0);
+
+        ui.label("UI Scale");
+
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        static SCALE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+        static TEMP_SCALE_VALUE: AtomicU32 = AtomicU32::new(0);
+
+        if !SCALE_INITIALIZED.load(Ordering::SeqCst) {
+            let scale_as_u32 = (self.ui_scale * 100.0) as u32;
+            TEMP_SCALE_VALUE.store(scale_as_u32, Ordering::SeqCst);
+            SCALE_INITIALIZED.store(true, Ordering::SeqCst);
+        }
+
+        let mut scale_as_u32 = TEMP_SCALE_VALUE.load(Ordering::SeqCst);
+        let mut scale = (scale_as_u32 as f32) / 100.0;
+
+        if ui
+            .add(
+                egui::Slider::new(&mut scale, 0.5..=2.5)
+                    .step_by(0.1)
+                    .text("Scale factor"),
+            )
+            .changed()
+        {
+            scale_as_u32 = (scale * 100.0) as u32;
+            TEMP_SCALE_VALUE.store(scale_as_u32, Ordering::SeqCst);
+        }
+
+        ui.add_space(10.0);
+
+        if ui.button("Preview Scale").clicked() {
+            self.ui_scale = scale;
+        }
+
+        if ui.button("Save & Restart").clicked() {
+            let context = self.context.clone();
+            let scale = scale;
+
+            use std::env;
+            use std::process::Command;
+
+            let current_exe = env::current_exe().expect("Could not get current executable path");
+
+            let handle = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = handle.block_on(async { context.set_ui_scale(scale).await }) {
+                    tracing::error!("Failed to save UI scale: {}", e);
+                } else {
+                    tracing::info!("UI scale saved: {}. Restarting application...", scale);
+
+                    Command::new(current_exe)
+                        .spawn()
+                        .expect("Failed to restart application");
+
+                    std::process::exit(0);
+                }
+            });
+        }
+
+        if ui.button("Reset to Default (1.0)").clicked() {
+            TEMP_SCALE_VALUE.store(100, Ordering::SeqCst);
+        }
+
+        ui.add_space(20.0);
+        ui.separator();
+
+        ui.label("Note: Changing UI scale affects text size, spacing, and window elements.");
+        ui.label("To apply scale changes, click 'Save & Restart Application' button.");
+        ui.label("Changes will be saved and the application will restart automatically.");
+    }
+
     fn draw_main_area(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
         if let Some(selected_root) = &self.selected_project {
             let config_path = PathBuf::from(selected_root).join(".cursor/mcp.json");
@@ -257,17 +391,14 @@ impl App {
                         }
                     });
 
-                    // Allocate the remaining available space in the vertical layout
                     let remaining_space = ui.available_size_before_wrap();
                     ui.allocate_ui(remaining_space, |ui| {
-                        // Show the dark frame within the allocated space
                         egui::Frame::dark_canvas(ui.style())
                             .fill(Color32::from_black_alpha(128))
                             .inner_margin(egui::Margin::same(4))
                             .show(ui, |ui| {
-                                // Make the ScrollArea fill the frame
                                 ScrollArea::vertical()
-                                    .auto_shrink([false, false]) // Don't shrink, fill space
+                                    .auto_shrink([false, false])
                                     .show(ui, |ui| {
                                         if let Some(project_events) = self.events.get(&project.name)
                                         {
@@ -360,40 +491,38 @@ impl App {
                 event.0.format("%Y-%m-%d %H:%M:%S.%3f")
             ));
             ui.separator();
-            ui.monospace(format!("{:#?}", event.1)); // Pretty-print the event
+            ui.monospace(format!("{:#?}", event.1));
         });
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
+        let current_scale = ctx.pixels_per_point();
+        if (current_scale - self.ui_scale).abs() > 0.01 {
+            self.ui_scale = current_scale
+        }
+
         let has_new_events = self.handle_notifications();
         let project_descriptions = self.project_descriptions.clone();
 
         let sidebar_frame = egui::Frame {
-            fill: egui::Color32::from_rgb(32, 32, 32), // Darker background
+            fill: egui::Color32::from_rgb(32, 32, 32),
             ..egui::Frame::side_top_panel(&ctx.style())
         };
 
         SidePanel::left("left_sidebar")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_width(200.0)
+            .default_width(300.0)
             .show(ctx, |ui| {
                 self.draw_left_sidebar(ui, &project_descriptions);
             });
 
-        // TopBottomPanel::bottom("bottom_panel")
-        //     .resizable(true)
-        //     .default_height(150.0)
-        //     .show(ctx, |ui| {
-        //         self.draw_bottom_bar(ui);
-        //     });
-
         if let Some(event) = self.selected_event.clone() {
             SidePanel::right("right_sidebar")
                 .resizable(true)
-                .default_width(350.0) // You can adjust the default width
+                .default_width(500.0)
                 .show(ctx, |ui| {
                     self.draw_right_sidebar(ui, event);
                 });
@@ -407,6 +536,19 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
     }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        let context = self.context.clone();
+        let scale = self.ui_scale;
+
+        tokio::spawn(async move {
+            if let Err(e) = context.set_ui_scale(scale).await {
+                tracing::error!("Failed to save UI scale on exit: {}", e);
+            } else {
+                tracing::debug!("UI scale saved on exit: {}", scale);
+            }
+        });
+    }
 }
 
 struct ListCell<'a> {
@@ -416,7 +558,6 @@ struct ListCell<'a> {
 }
 
 impl<'a> ListCell<'a> {
-    /// Creates a new ListCell.
     fn new(text: &'a str, is_selected: bool, is_spinning: bool) -> Self {
         Self {
             text,
@@ -425,17 +566,14 @@ impl<'a> ListCell<'a> {
         }
     }
 
-    /// Draws the ListCell and returns the interaction response.
     fn show(self, ui: &mut Ui) -> egui::Response {
-        // Calculate desired size (full width, standard height + padding)
         let desired_size = egui::vec2(
             ui.available_width(),
             ui.text_style_height(&egui::TextStyle::Body) + 2.0 * ui.style().spacing.item_spacing.y,
         );
-        // Allocate space and sense clicks for the entire row
+
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
-        // Draw background highlight if selected or hovered
         let bg_fill = if self.is_selected {
             ui.style().visuals.selection.bg_fill
         } else if response.hovered() {
@@ -447,13 +585,12 @@ impl<'a> ListCell<'a> {
         if bg_fill != Color32::TRANSPARENT {
             ui.painter().rect_filled(
                 rect.expand(ui.style().spacing.item_spacing.x / 2.0),
-                0, // No rounding
+                0,
                 bg_fill,
             );
         }
 
-        // Draw the content (label and spinner) within the allocated rectangle
-        let content_rect = rect.shrink(ui.style().spacing.item_spacing.x); // Add horizontal padding
+        let content_rect = rect.shrink(ui.style().spacing.item_spacing.x);
         #[allow(deprecated)]
         let mut content_ui = ui.child_ui(
             content_rect,
@@ -462,24 +599,19 @@ impl<'a> ListCell<'a> {
         );
 
         content_ui.horizontal(|ui| {
-            // Use a simple label, adjust text color if selected
             let text_color = if self.is_selected {
                 ui.style().visuals.strong_text_color()
             } else {
                 ui.style().visuals.text_color()
             };
 
-            // Create a Label widget and set its sense to Hover only,
-            // so it doesn't steal clicks from the parent response.
             let label = egui::Label::new(RichText::new(self.text).color(text_color))
                 .selectable(false)
                 .sense(egui::Sense::hover());
             ui.add(label);
 
-            // Align spinner to the right
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.is_spinning {
-                    // Use the same text_color for the spinner for consistency
                     ui.add(egui::Spinner::new().color(text_color));
                 }
             });

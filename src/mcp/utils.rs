@@ -30,15 +30,15 @@ impl RequestExtension for CallToolRequest {
             .and_then(|args| args.get("line"))
             .and_then(|v| v.as_u64())
             .ok_or_else(|| error_response("Line is required"))?;
-        // I'm not sure about this. Cursor just now used 0 based indexing
-        // Cursor gives llm's line numbers as 1-based, but the LSP uses 0-based
+        
+        
         Ok(number)
-        // if number == 0 {
-        // return Err(error_response(
-        // "Line number must be greater than 0 as line numbers are 1 based",
-        // ));
-        // }
-        // Ok(number - 1)
+        
+        
+        
+        
+        
+        
     }
 
     fn get_symbol(&self) -> Result<String, CallToolResponse> {
@@ -60,7 +60,6 @@ impl RequestExtension for CallToolRequest {
     }
 }
 
-/// Returns the project, the relative file path and the absolute file path
 pub async fn get_info_from_request(
     context: &Context,
     request: &CallToolRequest,
@@ -98,10 +97,6 @@ pub async fn find_symbol_position_in_file(
     Err(format!("Symbol {symbol} not found in file {relative_file}"))
 }
 
-/// Returns the lines between start_line and end_line (inclusive) from the given file path
-/// Optionally includes prefix lines before start_line and suffix lines after end_line
-/// Line numbers are 0-based
-/// Returns None if any line number is out of bounds after adjusting for prefix/suffix
 pub fn get_file_lines(
     file_path: impl AsRef<Path>,
     start_line: u32,
@@ -112,7 +107,7 @@ pub fn get_file_lines(
     let content = std::fs::read_to_string(file_path)?;
     let lines: Vec<&str> = content.lines().collect();
 
-    // Calculate actual line range accounting for prefix/suffix
+    
     let start = start_line.saturating_sub(prefix as u32);
     let mut end = end_line.saturating_add(suffix as u32);
 
@@ -120,12 +115,12 @@ pub fn get_file_lines(
         end = lines.len() as u32;
     }
 
-    // Check if line range is valid
+    
     if start > end || end >= lines.len() as u32 {
         return Ok(None);
     }
 
-    // Extract and join the requested lines
+    
     let selected_lines = lines[start as usize..=end as usize].join("\n");
     Ok(Some(selected_lines))
 }

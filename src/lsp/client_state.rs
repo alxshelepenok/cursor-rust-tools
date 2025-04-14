@@ -10,7 +10,7 @@ use lsp_types::{
     ShowMessageParams, WorkDoneProgress,
 };
 
-// Old and new token names.
+
 const RA_INDEXING_TOKENS: &[&str] = &[
     "rustAnalyzer/Indexing",
     "rustAnalyzer/cachePriming",

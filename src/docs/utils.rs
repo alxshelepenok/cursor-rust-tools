@@ -28,7 +28,7 @@ impl RustSymbol<'_> {
 }
 
 pub fn parse_rust_symbol(filename: &str) -> Option<RustSymbol> {
-    // Split on the first dot to separate the kind from the name
+    
     let parts: Vec<&str> = filename.splitn(2, '.').collect();
     if parts.len() != 2 {
         return None;
@@ -36,10 +36,10 @@ pub fn parse_rust_symbol(filename: &str) -> Option<RustSymbol> {
 
     let (kind, name) = (parts[0], parts[1]);
 
-    // Remove .html extension if present
+    
     let name = name.strip_suffix(".html").unwrap_or(name);
 
-    // Remove ! from macro names if present
+    
     let name = name.strip_suffix('!').unwrap_or(name);
 
     match kind {
@@ -53,15 +53,13 @@ pub fn parse_rust_symbol(filename: &str) -> Option<RustSymbol> {
     }
 }
 
-/// Get all dependencies from a Rust project. Supports workspaces as well.
-/// Returns a list of tuples with the dependency name and version.
 pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(String, String)>> {
     let mut dependencies = Vec::new();
     let cargo_path = project.root().join("Cargo.toml");
     let cargo_content = fs::read_to_string(&cargo_path)?;
     let cargo_toml: Value = toml::from_str(&cargo_content)?;
 
-    // Helper function to extract dependencies and versions
+    
     fn extract_deps(table: &Value) -> Vec<(String, String)> {
         table
             .as_table()
@@ -80,14 +78,14 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
             .unwrap_or_default()
     }
 
-    // Parse workspace dependencies if they exist
+    
     if let Some(workspace) = cargo_toml.get("workspace") {
         if let Some(workspace_deps) = workspace.get("dependencies") {
             dependencies.extend(extract_deps(workspace_deps));
         }
     }
 
-    // Get workspace members
+    
     let members = if let Some(workspace) = cargo_toml.get("workspace") {
         workspace
             .get("members")
@@ -106,11 +104,11 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
             })
             .unwrap_or_default()
     } else {
-        // If not a workspace, treat as single package
+        
         vec![Ok(project.root().to_path_buf())]
     };
 
-    // Parse dependencies from each member
+    
     for member_path in members {
         let Ok(member_path) = member_path else {
             tracing::error!("Error: {:?}", member_path);
@@ -122,7 +120,7 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
             let member_content = fs::read_to_string(member_cargo_path)?;
             let member_toml: Value = toml::from_str(&member_content)?;
 
-            // Get dependencies from different sections
+            
             if let Some(deps) = member_toml.get("dependencies") {
                 dependencies.extend(extract_deps(deps));
             }
@@ -141,7 +139,7 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
         }
     }
 
-    // Deduplicate dependencies (keep last occurrence)
+    
     dependencies.sort_by(|a, b| a.0.cmp(&b.0));
     dependencies.dedup_by(|a, b| a.0 == b.0);
     Ok(dependencies)

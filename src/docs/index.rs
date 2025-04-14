@@ -16,7 +16,7 @@ impl DocsIndex {
             fs::create_dir_all(repository.cache_dir())?;
         }
 
-        // Read cache file
+        
         let cache_path = repository.cache_dir().join("docs_cache.json");
         if !cache_path.exists() {
             let cache = DocsCache::default();
