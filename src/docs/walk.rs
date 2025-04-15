@@ -17,7 +17,7 @@ pub struct DocsCache {
 
 impl DocsCache {
     pub fn new(project: &crate::project::Project) -> Result<Self> {
-        let cache_path = project.cache_dir().join("docs_cache.json");
+        let cache_path = project.cache_dir().join("crates_cache.json");
         if cache_path.exists() {
             let content = fs::read_to_string(cache_path)?;
             Ok(serde_json::from_str(&content)?)
@@ -27,7 +27,7 @@ impl DocsCache {
     }
 
     pub fn save(&self, project: &crate::project::Project) -> Result<()> {
-        let cache_path = project.cache_dir().join("docs_cache.json");
+        let cache_path = project.cache_dir().join("crates_cache.json");
         fs::create_dir_all(project.cache_dir())?;
         fs::write(cache_path, serde_json::to_string_pretty(self)?)?;
         Ok(())
@@ -40,10 +40,8 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
     let dependencies = get_cargo_dependencies(project)?;
     tracing::info!("dependencies: {:?}", dependencies);
 
-    
     let dep_versions: HashMap<String, String> = dependencies.into_iter().collect();
 
-    
     let walker = WalkBuilder::new(project.docs_dir()).hidden(false).build();
 
     for result in walker {
@@ -53,7 +51,6 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
         if path.extension().and_then(|ext| ext.to_str()) == Some("html") {
             if let Some(relative_path) = path_to_cache_key(path, project.docs_dir()) {
                 if let Some((crate_name, file_path)) = extract_crate_and_path(&relative_path) {
-                    
                     let Some(version) = dep_versions.get(crate_name) else {
                         tracing::debug!(
                             "Skipping {crate_name}: {file_path} because it's not in dependencies"
@@ -61,13 +58,11 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         continue;
                     };
 
-                    
                     if project.ignore_crates().contains(&crate_name.to_string()) {
                         tracing::debug!("Skipping {crate_name} because it's in ignore list");
                         continue;
                     }
 
-                    
                     if let Some(cached_version) = cache.crate_versions.get(crate_name) {
                         if cached_version == version {
                             tracing::debug!(
@@ -77,7 +72,6 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         }
                     }
 
-                    
                     let html_content = fs::read_to_string(path)?;
                     let markdown = extract_md(&html_content);
                     tracing::debug!("Indexing {crate_name}: {file_path}");
@@ -92,7 +86,6 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
                         .or_default()
                         .insert(symbol, markdown);
 
-                    
                     cache
                         .crate_versions
                         .insert(crate_name.to_string(), version.clone());
@@ -101,7 +94,6 @@ pub fn walk_docs(project: &crate::project::Project) -> Result<()> {
         }
     }
 
-    
     cache.save(project)?;
 
     Ok(())

@@ -16,8 +16,7 @@ impl DocsIndex {
             fs::create_dir_all(repository.cache_dir())?;
         }
 
-        
-        let cache_path = repository.cache_dir().join("docs_cache.json");
+        let cache_path = repository.cache_dir().join("crates_cache.json");
         if !cache_path.exists() {
             let cache = DocsCache::default();
             let cache_content = serde_json::to_string(&cache)?;
